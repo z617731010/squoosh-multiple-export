@@ -19,6 +19,54 @@
   }
 }
 
+.download-all-button-left {
+  background-color: black;
+  border: none;
+  padding: 10px 20px;
+  text-align: center;
+  text-decoration: none;
+  display: inline-block;
+  font-size: 16px;
+  margin: 4px 2px 20px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.3s ease;
+  color: white;
+
+  @media (max-width: 600px) {
+    width: 100%;
+    margin: 8px 0;
+  }
+}
+
+.download-all-button-right:hover {
+  background-color: rgba(95, 180, 228, 0.8);
+}
+
+.download-all-button-right {
+  background-color: var(--blue);
+  border: none;
+  padding: 10px 20px;
+  text-align: center;
+  text-decoration: none;
+  display: inline-block;
+  font-size: 16px;
+  margin: 4px 8px 32px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.3s ease;
+  color: black;
+
+  @media (max-width: 600px) {
+    width: 100%;
+    margin: 8px 0;
+  }
+}
+
+.download-all-button-left:hover {
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
 .options {
   position: relative;
   color: #fff;

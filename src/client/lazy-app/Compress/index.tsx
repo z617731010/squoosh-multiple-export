@@ -1045,9 +1045,18 @@ export default class Compress extends Component<Props, State> {
 
     const results = sides.map((side, index) => (
       <Fragment key={index}>
-        <button onClick={this.handleDownloadAll(index)}>
-          {`Download All ${this.files.length} files`}
-        </button>
+        {this.files.length > 1 && (
+          <button
+            onClick={this.handleDownloadAll(index)}
+            class={
+              index === 0
+                ? style.downloadAllButtonLeft
+                : style.downloadAllButtonRight
+            }
+          >
+            {`Download All ${this.files.length} Files `}
+          </button>
+        )}
         <Results
           downloadUrl={side.downloadUrl}
           imageFile={side.file}
