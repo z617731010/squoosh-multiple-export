@@ -1,4 +1,4 @@
-import { h, Component } from 'preact';
+import { h, Component, Fragment } from 'preact';
 
 import * as style from './style.css';
 import 'add-css:./style.css';
@@ -52,13 +52,22 @@ interface Side {
   file?: File;
   downloadUrl?: string;
   data?: ImageData;
+  /**
+   * Settings user has selected.
+   */
   latestSettings: SideSettings;
+  /**
+   * Settings actually used to process image.
+   *
+   * latestSettings gets assigned to this property as soon as the image of this side gets
+   * processed.
+   */
   encodedSettings?: SideSettings;
   loading: boolean;
 }
 
 interface Props {
-  file: File;
+  files: File[];
   showSnack: SnackBarElement['showSnackbar'];
   onBack: () => void;
 }
@@ -330,7 +339,8 @@ export default class Compress extends Component<Props, State> {
   constructor(props: Props) {
     super(props);
     this.widthQuery.addListener(this.onMobileWidthChange);
-    this.sourceFile = props.file;
+    this.sourceFile = props.files[0];
+    this.files = props.files;
     this.queueUpdateImage({ immediate: true });
 
     import('../sw-bridge').then(({ mainAppLoaded }) => mainAppLoaded());
@@ -382,8 +392,9 @@ export default class Compress extends Component<Props, State> {
   };
 
   componentWillReceiveProps(nextProps: Props): void {
-    if (nextProps.file !== this.props.file) {
-      this.sourceFile = nextProps.file;
+    if (nextProps.files !== this.props.files) {
+      this.files = nextProps.files;
+      this.sourceFile = this.files[0];
       this.queueUpdateImage({ immediate: true });
     }
   }
@@ -568,23 +579,45 @@ export default class Compress extends Component<Props, State> {
     }));
   };
 
+  private triggerDownload(content: Blob, fileName: string) {
+    const url = URL.createObjectURL(content);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
   /**
    * Debounce the heavy lifting of updateImage.
    * Otherwise, the thrashing causes jank, and sometimes crashes iOS Safari.
    */
-  private queueUpdateImage({ immediate }: { immediate?: boolean } = {}): void {
+  private async queueUpdateImage({
+    immediate,
+    sideDisabled,
+  }: { immediate?: boolean; sideDisabled?: number } = {}): Promise<void> {
     // Call updateImage after this delay, unless queueUpdateImage is called
     // again, in which case the timeout is reset.
     const delay = 100;
 
     clearTimeout(this.updateImageTimeout);
     if (immediate) {
-      this.updateImage();
+      await this.updateImage({
+        sideDisabled,
+      });
     } else {
-      this.updateImageTimeout = setTimeout(() => this.updateImage(), delay);
+      this.updateImageTimeout = window.setTimeout(
+        () => this.updateImage(),
+        delay,
+      );
     }
   }
 
+  /** * All files the user has selected. The first item in this array is the same as the source file upon start. */
+  private files: File[];
+  /** The main source file for previewing */
   private sourceFile: File;
   /** The in-progress job for decoding and preprocessing */
   private activeMainJob?: MainJob;
@@ -598,7 +631,12 @@ export default class Compress extends Component<Props, State> {
    * never gets partially called. Instead, it looks at the current state, and
    * decides which steps can be skipped, and which can be cached.
    */
-  private async updateImage() {
+  private async updateImage(opts?: {
+    /**
+     * The index of the side job to disable in this processing run.
+     */
+    sideDisabled?: number;
+  }) {
     const currentState = this.state;
 
     // State of the last completed job, or ongoing job
@@ -635,6 +673,12 @@ export default class Compress extends Component<Props, State> {
       needsDecoding ||
       latestMainJobState.preprocessorState !== mainJobState.preprocessorState;
     const sideWorksNeeded = latestSideJobStates.map((latestSideJob, i) => {
+      if (i === opts?.sideDisabled)
+        return {
+          processing: false,
+          encoding: false,
+        };
+
       const needsProcessing =
         needsPreprocessing ||
         !latestSideJob.processorState ||
@@ -794,7 +838,7 @@ export default class Compress extends Component<Props, State> {
     this.activeMainJob = undefined;
 
     // Allow side jobs to happen in parallel
-    sideWorksNeeded.forEach(async (sideWorkNeeded, sideIndex) => {
+    const jobs = sideWorksNeeded.map(async (sideWorkNeeded, sideIndex) => {
       try {
         // If processing is true, encoding is always true.
         if (!sideWorkNeeded.encoding) return;
@@ -916,6 +960,64 @@ export default class Compress extends Component<Props, State> {
         throw err;
       }
     });
+
+    return await Promise.allSettled(jobs);
+  }
+
+  private downloadFromUrl(url: string) {
+    let a = document.createElement('a');
+    a.setAttribute('href', url);
+    a.setAttribute('download', '');
+    a.setAttribute('target', '_blank');
+    a.click();
+    a.remove();
+  }
+
+  /**
+   * Download all using settings from one of the two sides by
+   * queuing each image in succession.
+   *
+   * This may cause flashing on the user's screen.
+   */
+  private handleDownloadAll(sideIndex: number) {
+    return async () => {
+      const thisSide = sideIndex;
+      const theOtherSide = thisSide ^ 1;
+      const currentMainFile = this.sourceFile;
+
+      try {
+        for (const file of this.files) {
+          this.sourceFile = file;
+
+          await this.queueUpdateImage({
+            immediate: true,
+            sideDisabled: theOtherSide,
+          });
+
+          // Force update so that we can read the latest 'state.sides'
+          this.forceUpdate();
+
+          const downloadUrl = this.state.sides[thisSide].downloadUrl;
+
+          if (downloadUrl) {
+            this.downloadFromUrl(downloadUrl);
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+
+        // Restore image.
+        this.sourceFile = currentMainFile;
+        await this.queueUpdateImage({
+          immediate: false,
+        });
+
+        alert('All files have been saved successfully!');
+      } catch (err) {
+        console.error('Error saving files:', err);
+        alert('There was an error saving the files. Please try again.');
+      }
+    };
   }
 
   render(
@@ -942,18 +1044,23 @@ export default class Compress extends Component<Props, State> {
     ));
 
     const results = sides.map((side, index) => (
-      <Results
-        downloadUrl={side.downloadUrl}
-        imageFile={side.file}
-        source={source}
-        loading={loading || side.loading}
-        flipSide={mobileView || index === 1}
-        typeLabel={
-          side.latestSettings.encoderState
-            ? encoderMap[side.latestSettings.encoderState.type].meta.label
-            : `${side.file ? `${side.file.name}` : 'Original Image'}`
-        }
-      />
+      <Fragment key={index}>
+        <button onClick={this.handleDownloadAll(index)}>
+          {`Download All ${this.files.length} files`}
+        </button>
+        <Results
+          downloadUrl={side.downloadUrl}
+          imageFile={side.file}
+          source={source}
+          loading={loading || side.loading}
+          flipSide={mobileView || index === 1}
+          typeLabel={
+            side.latestSettings.encoderState
+              ? encoderMap[side.latestSettings.encoderState.type].meta.label
+              : `${side.file ? `${side.file.name}` : 'Original Image'}`
+          }
+        />
+      </Fragment>
     ));
 
     // For rendering, we ideally want the settings that were used to create the
