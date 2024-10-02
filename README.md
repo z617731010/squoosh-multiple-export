@@ -10,6 +10,8 @@ Clicking on either of them download your images with settings of that side.
 
 ![Exporting multiple files demo image](export-multiple.png)
 
+Original documentation below.
+
 # [Squoosh]!
 
 [Squoosh] is an image compression web app that reduces image sizes through numerous formats.
