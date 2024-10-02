@@ -1,23 +1,3 @@
-# THIS IS A FORK
-
-This fork supports multiple files export. The rest is the same.
-
-## Exporting Multiple Files
-
-When you select more than 1 file, you will see two buttons for downloading multiple files, one for each of the side.
-
-Clicking on either of them download your images with settings of that side.
-
-![Exporting multiple files demo image](export-multiple.png)
-
-## Selecting Preview
-
-You can also select which of the images to preview by clicking on the dropdown at the bottom center when you have chosen more than 1 file.
-
-![preview selection](preview-selection.png)
-
-**_Original documentation below._**
-
 # [Squoosh]!
 
 [Squoosh] is an image compression web app that reduces image sizes through numerous formats.
