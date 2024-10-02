@@ -1,3 +1,7 @@
+# THIS IS A FORK
+
+This fork supports multiple files export. The rest is the same.
+
 # [Squoosh]!
 
 [Squoosh] is an image compression web app that reduces image sizes through numerous formats.
