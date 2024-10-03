@@ -598,7 +598,12 @@ export default class Compress extends Component<Props, State> {
   private async queueUpdateImage({
     immediate,
     sideDisabled,
-  }: { immediate?: boolean; sideDisabled?: number } = {}): Promise<void> {
+    resetSize,
+  }: {
+    immediate?: boolean;
+    sideDisabled?: number;
+    resetSize?: boolean;
+  } = {}): Promise<void> {
     // Call updateImage after this delay, unless queueUpdateImage is called
     // again, in which case the timeout is reset.
     const delay = 100;
@@ -607,6 +612,7 @@ export default class Compress extends Component<Props, State> {
     if (immediate) {
       await this.updateImage({
         sideDisabled,
+        resetSize,
       });
     } else {
       this.updateImageTimeout = window.setTimeout(
@@ -637,6 +643,10 @@ export default class Compress extends Component<Props, State> {
      * The index of the side job to disable in this processing run.
      */
     sideDisabled?: number;
+    /**
+     * Whether or not to reset the resize edit once the processing is done.
+     */
+    resetSize?: boolean;
   }) {
     const currentState = this.state;
 
@@ -748,25 +758,27 @@ export default class Compress extends Component<Props, State> {
           );
         }
 
-        // Set default resize values
-        this.setState((currentState) => {
-          if (mainSignal.aborted) return {};
-          const sides = currentState.sides.map((side) => {
-            const resizeState: Partial<ProcessorState['resize']> = {
-              width: decoded.width,
-              height: decoded.height,
-              method: vectorImage ? 'vector' : 'lanczos3',
-              // Disable resizing, to make it clearer to the user that something changed here
-              enabled: false,
-            };
-            return cleanMerge(
-              side,
-              'latestSettings.processorState.resize',
-              resizeState,
-            );
-          }) as [Side, Side];
-          return { sides };
-        });
+        if (opts?.resetSize) {
+          // Set default resize values
+          this.setState((currentState) => {
+            if (mainSignal.aborted) return {};
+            const sides = currentState.sides.map((side) => {
+              const resizeState: Partial<ProcessorState['resize']> = {
+                width: decoded.width,
+                height: decoded.height,
+                method: vectorImage ? 'vector' : 'lanczos3',
+                // Disable resizing, to make it clearer to the user that something changed here
+                enabled: false,
+              };
+              return cleanMerge(
+                side,
+                'latestSettings.processorState.resize',
+                resizeState,
+              );
+            }) as [Side, Side];
+            return { sides };
+          });
+        }
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') return;
         this.props.showSnack(`Source decoding error: ${err}`);
@@ -993,6 +1005,7 @@ export default class Compress extends Component<Props, State> {
           await this.queueUpdateImage({
             immediate: true,
             sideDisabled: theOtherSide,
+            resetSize: false,
           });
 
           // Force update so that we can read the latest 'state.sides'
@@ -1011,6 +1024,7 @@ export default class Compress extends Component<Props, State> {
         this.sourceFile = currentMainFile;
         await this.queueUpdateImage({
           immediate: false,
+          resetSize: false,
         });
 
         alert('All files have been saved successfully!');
