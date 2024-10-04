@@ -33,7 +33,6 @@ import { resize } from 'features/processors/resize/client';
 import type SnackBarElement from 'shared/custom-els/snack-bar';
 import { drawableToImageData } from '../util/canvas';
 import Select from './Options/Select';
-import { zip } from 'fflate';
 
 export type OutputType = EncoderType | 'identity';
 
@@ -581,6 +580,17 @@ export default class Compress extends Component<Props, State> {
     }));
   };
 
+  private triggerDownload(content: Blob, fileName: string) {
+    const url = URL.createObjectURL(content);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
   /**
    * Debounce the heavy lifting of updateImage.
    * Otherwise, the thrashing causes jank, and sometimes crashes iOS Safari.
@@ -987,7 +997,6 @@ export default class Compress extends Component<Props, State> {
       const thisSide = sideIndex;
       const theOtherSide = thisSide ^ 1;
       const currentMainFile = this.sourceFile;
-      const files: File[] = [];
 
       try {
         for (const file of this.files) {
@@ -1002,12 +1011,13 @@ export default class Compress extends Component<Props, State> {
           // Force update so that we can read the latest 'state.sides'
           this.forceUpdate();
 
-          const side = this.state.sides[thisSide];
-          if (side.file) {
-            files.push(side.file);
-          } else {
-            console.warn('File not found');
+          const downloadUrl = this.state.sides[thisSide].downloadUrl;
+
+          if (downloadUrl) {
+            this.downloadFromUrl(downloadUrl);
           }
+
+          await new Promise((resolve) => setTimeout(resolve, 300));
         }
 
         // Restore image.
@@ -1017,39 +1027,10 @@ export default class Compress extends Component<Props, State> {
           resetSize: false,
         });
 
-        // creates archive object
-        const archive: Record<string, Uint8Array> = {};
-        await Promise.all(
-          files.map(async (f) => {
-            const arrayBuffer = await f.arrayBuffer();
-            archive[f.name] = new Uint8Array(arrayBuffer);
-          }),
-        );
-
-        // zip multiple
-        const data = await new Promise<Uint8Array | null>((resolve) => {
-          zip(archive, (err, data) => {
-            if (err) {
-              this.props.showSnack(
-                `Something went wrong while exporting files. Please try again.`,
-              );
-              console.error('Export error: ', err);
-              resolve(null);
-            } else resolve(data);
-          });
-        });
-
-        if (!data) return;
-
-        const objectUrl = URL.createObjectURL(new Blob([data]));
-        this.downloadFromUrl(objectUrl);
-
-        this.props.showSnack('All files saved');
+        alert('All files have been saved successfully!');
       } catch (err) {
         console.error('Error saving files:', err);
-        this.props.showSnack(
-          'There was an error saving the files. Please try again.',
-        );
+        alert('There was an error saving the files. Please try again.');
       }
     };
   }
