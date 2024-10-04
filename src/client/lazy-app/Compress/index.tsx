@@ -967,15 +967,16 @@ export default class Compress extends Component<Props, State> {
     return await Promise.allSettled(jobs);
   }
 
-  private downloadFromUrl(url: string) {
-    let a = document.createElement('a');
-    a.setAttribute('href', url);
-    a.setAttribute('download', '');
-    a.setAttribute('target', '_blank');
+  private downloadFromUrl(url: string, fileName: string = 'download.zip') {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.target = '_blank';
+    document.body.appendChild(a);
     a.click();
-    a.remove();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
-
   /**
    * Download all using settings from one of the two sides by
    * queuing each image in succession.
