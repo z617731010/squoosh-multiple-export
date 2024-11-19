@@ -15,6 +15,7 @@ import {
 } from '../feature-meta';
 import { assertSignal } from '../util';
 import { cleanMerge, cleanSet } from '../util/clean-modify';
+import { isAbortError } from '../util/error';
 import WorkerBridge from '../worker-bridge';
 import './custom-els/MultiPanel';
 import Options from './Options';
@@ -219,7 +220,7 @@ export default class Compress extends Component<Props, State> {
     this.widthQuery.addListener(this.onMobileWidthChange);
     this.sourceFile = props.files[0];
     this.files = props.files;
-    this.queueUpdateImage({ immediate: true });
+    this.queuePreviewedImageUpdate({ immediate: true });
 
     import('../sw-bridge').then(({ mainAppLoaded }) => mainAppLoaded());
   }
@@ -273,7 +274,7 @@ export default class Compress extends Component<Props, State> {
     if (nextProps.files !== this.props.files) {
       this.files = nextProps.files;
       this.sourceFile = this.files[0];
-      this.queueUpdateImage({ immediate: true });
+      this.queuePreviewedImageUpdate({ immediate: true });
     }
   }
 
@@ -302,7 +303,7 @@ export default class Compress extends Component<Props, State> {
         filename: this.state.source?.file.name,
       });
     }
-    this.queueUpdateImage();
+    this.queuePreviewedImageUpdate();
   }
 
   private onCopyToOtherClick = async (index: 0 | 1) => {
@@ -457,27 +458,16 @@ export default class Compress extends Component<Props, State> {
     }));
   };
 
-  private triggerDownload(content: Blob, fileName: string) {
-    const url = URL.createObjectURL(content);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }
-
   /**
+   * Queues an update for the currently-previewed image.
+   *
    * Debounce the heavy lifting of updateImage.
    * Otherwise, the thrashing causes jank, and sometimes crashes iOS Safari.
    */
-  private async queueUpdateImage({
+  private async queuePreviewedImageUpdate({
     immediate,
-    sideDisabled,
   }: {
     immediate?: boolean;
-    sideDisabled?: number;
   } = {}): Promise<void> {
     // Call updateImage after this delay, unless queueUpdateImage is called
     // again, in which case the timeout is reset.
@@ -485,14 +475,74 @@ export default class Compress extends Component<Props, State> {
 
     clearTimeout(this.updateImageTimeout);
     if (immediate) {
-      await this.updateImage({
-        sideDisabled,
-      });
+      await this.updateImage();
     } else {
       this.updateImageTimeout = window.setTimeout(
-        () => this.updateImage(),
+        this.updateImage.bind(this),
         delay,
       );
+    }
+  }
+
+  /**
+   * Process an image immediately.
+   *
+   * This is a simpler workflow, with no UI state update, no caching, no checking if we need to skip any processing.
+   *
+   * @param file the file to process
+   * @param side the index of the side whose settings we want to use
+   * @return the processed file. Null if error
+   */
+  private async immediateImageUpdate(
+    file: File,
+    sideIndex: number,
+  ): Promise<File | null> {
+    const side = this.state.sides[sideIndex];
+    const workerBridge = this.workerBridges[0];
+    const mainSignal = this.mainAbortController.signal;
+    const preprocessor = this.state.preprocessorState;
+    const selectedProcessor = side.latestSettings.encoderState
+      ? side.latestSettings.processorState
+      : defaultProcessorState;
+    const selectedEncoder = side.latestSettings.encoderState;
+
+    try {
+      const { decoded, vectorImage } = await decodeImage(
+        mainSignal,
+        file,
+        workerBridge,
+      );
+      const preprocessed = await preprocessImage(
+        mainSignal,
+        decoded,
+        preprocessor,
+        workerBridge,
+      );
+      const processed = await processImage(
+        mainSignal,
+        {
+          decoded,
+          file,
+          preprocessed,
+          vectorImage,
+        },
+        selectedProcessor,
+        workerBridge,
+      );
+      const compressedFile = await compressImage(
+        mainSignal,
+        processed,
+        selectedEncoder!,
+        file.name,
+        workerBridge,
+      );
+
+      return compressedFile;
+    } catch (e) {
+      if (isAbortError(e)) return null;
+      // Console instead of snack otherwise this will spam the user's snack feed if there are many errors.
+      console.error(`Bulk processing error: ${e}`);
+      throw e;
     }
   }
 
@@ -512,12 +562,7 @@ export default class Compress extends Component<Props, State> {
    * never gets partially called. Instead, it looks at the current state, and
    * decides which steps can be skipped, and which can be cached.
    */
-  private async updateImage(opts?: {
-    /**
-     * The index of the side job to disable in this processing run.
-     */
-    sideDisabled?: number;
-  }) {
+  private async updateImage() {
     const currentState = this.state;
 
     // State of the last completed job, or ongoing job
@@ -554,12 +599,6 @@ export default class Compress extends Component<Props, State> {
       needsDecoding ||
       latestMainJobState.preprocessorState !== mainJobState.preprocessorState;
     const sideWorksNeeded = latestSideJobStates.map((latestSideJob, i) => {
-      if (i === opts?.sideDisabled)
-        return {
-          processing: false,
-          encoding: false,
-        };
-
       const needsProcessing =
         needsPreprocessing ||
         !latestSideJob.processorState ||
@@ -641,7 +680,7 @@ export default class Compress extends Component<Props, State> {
           return { sides };
         });
       } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') return;
+        if (isAbortError(err)) return;
         this.props.showSnack(`Source decoding error: ${err}`);
         throw err;
       }
@@ -855,41 +894,32 @@ export default class Compress extends Component<Props, State> {
    */
   private handleDownloadAll(sideIndex: number) {
     return async () => {
-      const thisSide = sideIndex;
-      const theOtherSide = thisSide ^ 1;
-      const currentMainFile = this.sourceFile;
-
       try {
-        for (const file of this.files) {
-          this.sourceFile = file;
+        const processResult = await Promise.allSettled(
+          this.files.map((f) => this.immediateImageUpdate(f, sideIndex)),
+        );
+        const processed = processResult
+          .map((r) => (r.status === 'fulfilled' ? r.value : null))
+          .filter(Boolean) as File[];
+        const downloadUrls = processed.map(URL.createObjectURL);
 
-          await this.queueUpdateImage({
-            immediate: true,
-            sideDisabled: theOtherSide,
-          });
-
-          // Force update so that we can read the latest 'state.sides'
-          this.forceUpdate();
-
-          const downloadUrl = this.state.sides[thisSide].downloadUrl;
-
-          if (downloadUrl) {
-            this.downloadFromUrl(downloadUrl);
-          }
-
+        for (const url of downloadUrls) {
+          this.downloadFromUrl(url);
           await new Promise((resolve) => setTimeout(resolve, 300));
         }
 
-        // Restore image.
-        this.sourceFile = currentMainFile;
-        await this.queueUpdateImage({
-          immediate: false,
-        });
+        downloadUrls.forEach((u) => URL.revokeObjectURL(u));
 
-        alert('All files have been saved successfully!');
+        if (processResult.length === downloadUrls.length) {
+          this.props.showSnack('All files have been saved successfully!');
+        } else {
+          this.props.showSnack('Some files could not be processed');
+        }
       } catch (err) {
         console.error('Error saving files:', err);
-        alert('There was an error saving the files. Please try again.');
+        this.props.showSnack(
+          'There was an error saving the files. Please try again.',
+        );
       }
     };
   }
@@ -905,7 +935,7 @@ export default class Compress extends Component<Props, State> {
 
     this.sourceFile = found;
 
-    this.queueUpdateImage({ immediate: true });
+    this.queuePreviewedImageUpdate({ immediate: true });
   }
 
   render(

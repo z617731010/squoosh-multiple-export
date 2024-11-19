@@ -89,6 +89,7 @@ export async function decodeImage(
   vectorImage?: HTMLImageElement;
   decoded: ImageData;
 }> {
+  assertSignal(signal);
   // Special-case SVG. We need to avoid createImageBitmap because of
   // https://bugs.chromium.org/p/chromium/issues/detail?id=606319.
   // Also, we cache the HTMLImageElement so we can perform vector resizing later.
