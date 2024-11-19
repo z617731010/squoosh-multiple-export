@@ -13,15 +13,8 @@ import {
   PreprocessorState,
   ProcessorState,
 } from '../feature-meta';
-import {
-  abortable,
-  assertSignal,
-  blobToImg,
-  blobToText,
-  ImageMimeTypes,
-} from '../util';
+import { assertSignal } from '../util';
 import { cleanMerge, cleanSet } from '../util/clean-modify';
-import { decodeBitmap, decodeImage } from '../util/decode-stage';
 import WorkerBridge from '../worker-bridge';
 import './custom-els/MultiPanel';
 import Options from './Options';
@@ -29,6 +22,9 @@ import Select from './Options/Select';
 import Output from './Output';
 import ResultCache from './result-cache';
 import Results from './Results';
+import { compressImage } from './stages/compress-stage';
+import { decodeBitmap, decodeImage } from './stages/decode-stage';
+import { preprocessImage } from './stages/preprocess-stage';
 import * as style from './style.css';
 
 export type OutputType = EncoderType | 'identity';
@@ -95,26 +91,6 @@ interface LoadingFileInfo {
   filename?: string;
 }
 
-async function preprocessImage(
-  signal: AbortSignal,
-  data: ImageData,
-  preprocessorState: PreprocessorState,
-  workerBridge: WorkerBridge,
-): Promise<ImageData> {
-  assertSignal(signal);
-  let processedData = data;
-
-  if (preprocessorState.rotate.rotate !== 0) {
-    processedData = await workerBridge.rotate(
-      signal,
-      processedData,
-      preprocessorState.rotate,
-    );
-  }
-
-  return processedData;
-}
-
 async function processImage(
   signal: AbortSignal,
   source: SourceImage,
@@ -137,34 +113,6 @@ async function processImage(
   return result;
 }
 
-async function compressImage(
-  signal: AbortSignal,
-  image: ImageData,
-  encodeData: EncoderState,
-  sourceFilename: string,
-  workerBridge: WorkerBridge,
-): Promise<File> {
-  assertSignal(signal);
-
-  const encoder = encoderMap[encodeData.type];
-  const compressedData = await encoder.encode(
-    signal,
-    workerBridge,
-    image,
-    // The type of encodeData.options is enforced via the previous line
-    encodeData.options as any,
-  );
-
-  // This type ensures the image mimetype is consistent with our mimetype sniffer
-  const type: ImageMimeTypes = encoder.meta.mimeType;
-
-  return new File(
-    [compressedData],
-    sourceFilename.replace(/.[^.]*$/, `.${encoder.meta.extension}`),
-    { type },
-  );
-}
-
 function stateForNewSourceData(state: State): State {
   let newState = { ...state };
 
@@ -183,38 +131,6 @@ function stateForNewSourceData(state: State): State {
   }
 
   return newState;
-}
-
-async function processSvg(
-  signal: AbortSignal,
-  blob: Blob,
-): Promise<HTMLImageElement> {
-  assertSignal(signal);
-  // Firefox throws if you try to draw an SVG to canvas that doesn't have width/height.
-  // In Chrome it loads, but drawImage behaves weirdly.
-  // This function sets width/height if it isn't already set.
-  const parser = new DOMParser();
-  const text = await abortable(signal, blobToText(blob));
-  const document = parser.parseFromString(text, 'image/svg+xml');
-  const svg = document.documentElement!;
-
-  if (svg.hasAttribute('width') && svg.hasAttribute('height')) {
-    return blobToImg(blob);
-  }
-
-  const viewBox = svg.getAttribute('viewBox');
-  if (viewBox === null) throw Error('SVG must have width/height or viewBox');
-
-  const viewboxParts = viewBox.split(/\s+/);
-  svg.setAttribute('width', viewboxParts[2]);
-  svg.setAttribute('height', viewboxParts[3]);
-
-  const serializer = new XMLSerializer();
-  const newSource = serializer.serializeToString(document);
-  return abortable(
-    signal,
-    blobToImg(new Blob([newSource], { type: 'image/svg+xml' })),
-  );
 }
 
 /**

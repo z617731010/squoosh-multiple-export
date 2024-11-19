@@ -6,9 +6,9 @@ import {
   builtinDecode,
   canDecodeImageType,
   sniffMimeType,
-} from '.';
-import WorkerBridge from '../worker-bridge';
-import { drawableToImageData } from './canvas';
+} from 'client/lazy-app/util';
+import { drawableToImageData } from 'client/lazy-app/util/canvas';
+import WorkerBridge from 'client/lazy-app/worker-bridge';
 
 async function processSvg(
   signal: AbortSignal,
