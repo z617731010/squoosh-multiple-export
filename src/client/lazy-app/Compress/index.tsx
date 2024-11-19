@@ -18,13 +18,10 @@ import {
   assertSignal,
   blobToImg,
   blobToText,
-  builtinDecode,
-  canDecodeImageType,
   ImageMimeTypes,
-  sniffMimeType,
 } from '../util';
-import { drawableToImageData } from '../util/canvas';
 import { cleanMerge, cleanSet } from '../util/clean-modify';
+import { decodeBitmap, decodeImage } from '../util/decode-stage';
 import WorkerBridge from '../worker-bridge';
 import './custom-els/MultiPanel';
 import Options from './Options';
@@ -96,42 +93,6 @@ interface SideJob {
 interface LoadingFileInfo {
   loading: boolean;
   filename?: string;
-}
-
-async function decodeImage(
-  signal: AbortSignal,
-  blob: Blob,
-  workerBridge: WorkerBridge,
-): Promise<ImageData> {
-  assertSignal(signal);
-  const mimeType = await abortable(signal, sniffMimeType(blob));
-  const canDecode = await abortable(signal, canDecodeImageType(mimeType));
-
-  try {
-    if (!canDecode) {
-      if (mimeType === 'image/avif') {
-        return await workerBridge.avifDecode(signal, blob);
-      }
-      if (mimeType === 'image/webp') {
-        return await workerBridge.webpDecode(signal, blob);
-      }
-      if (mimeType === 'image/jxl') {
-        return await workerBridge.jxlDecode(signal, blob);
-      }
-      if (mimeType === 'image/webp2') {
-        return await workerBridge.wp2Decode(signal, blob);
-      }
-      if (mimeType === 'image/qoi') {
-        return await workerBridge.qoiDecode(signal, blob);
-      }
-    }
-    // Otherwise fall through and try built-in decoding for a laugh.
-    return await builtinDecode(signal, blob);
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') throw err;
-    console.log(err);
-    throw Error("Couldn't decode image");
-  }
 }
 
 async function preprocessImage(
@@ -736,20 +697,13 @@ export default class Compress extends Component<Props, State> {
           loading: true,
         });
 
-        // Special-case SVG. We need to avoid createImageBitmap because of
-        // https://bugs.chromium.org/p/chromium/issues/detail?id=606319.
-        // Also, we cache the HTMLImageElement so we can perform vector resizing later.
-        if (mainJobState.file.type.startsWith('image/svg+xml')) {
-          vectorImage = await processSvg(mainSignal, mainJobState.file);
-          decoded = drawableToImageData(vectorImage);
-        } else {
-          decoded = await decodeImage(
-            mainSignal,
-            mainJobState.file,
-            // Either worker is good enough here.
-            this.workerBridges[0],
-          );
-        }
+        const { decoded: decodedImage, vectorImage: vect } = await decodeImage(
+          mainSignal,
+          mainJobState.file,
+          this.workerBridges[0],
+        );
+        decoded = decodedImage;
+        vectorImage = vect;
 
         // Set default resize values
         this.setState((currentState) => {
@@ -914,7 +868,7 @@ export default class Compress extends Component<Props, State> {
               source.file.name,
               workerBridge,
             );
-            data = await decodeImage(signal, file, workerBridge);
+            data = await decodeBitmap(signal, file, workerBridge);
 
             this.encodeCache.add({
               data,
