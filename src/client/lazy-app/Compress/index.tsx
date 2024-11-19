@@ -546,7 +546,8 @@ export default class Compress extends Component<Props, State> {
     } catch (e) {
       if (isAbortError(e)) return null;
       // Console instead of snack otherwise this will spam the user's snack feed if there are many errors.
-      console.error(`Bulk processing error: ${e}`);
+      // when bulk processing
+      console.error(`Image processing error: ${e}`);
       throw e;
     }
   }
@@ -890,30 +891,47 @@ export default class Compress extends Component<Props, State> {
   }
 
   /**
-   * Download all using settings from one of the two sides by
-   * queuing each image in succession.
-   *
-   * This may cause flashing on the user's screen.
+   * Download all using settings from one of the two sides.
    */
   private handleDownloadAll(sideIndex: number) {
     return async () => {
       try {
-        const processResult = await Promise.allSettled(
-          this.files.map((f) => this.immediateImageUpdate(f, sideIndex)),
-        );
-        const processed = processResult
-          .map((r) => (r.status === 'fulfilled' ? r.value : null))
-          .filter(Boolean) as File[];
-        const downloadUrls = processed.map(URL.createObjectURL);
+        let downloadCount = 0;
 
-        for (const url of downloadUrls) {
-          this.downloadFromUrl(url);
-          await new Promise((resolve) => setTimeout(resolve, 300));
+        const downloadBulk = async (files: Promise<File | null>[]) => {
+          if (files.length === 0) return;
+          const processed = (await Promise.allSettled(files))
+            .map((r) => (r.status === 'fulfilled' ? r.value : null))
+            .filter(Boolean) as File[];
+          const downloadUrls = processed.map(URL.createObjectURL);
+
+          for (const url of downloadUrls) {
+            this.downloadFromUrl(url);
+            // throttle a bit otherwise the browser won't let us download many files.
+            await new Promise((resolve) => setTimeout(resolve, 300));
+          }
+
+          downloadUrls.forEach((u) => URL.revokeObjectURL(u));
+
+          downloadCount += downloadUrls.length;
+        };
+
+        const BULK_SIZE = 10;
+        let promises: Promise<File | null>[] = [];
+        for (let i = 0; i < this.files.length; i++) {
+          const file = this.files[i];
+          const promise = this.immediateImageUpdate(file, sideIndex);
+          promises.push(promise);
+          if (i % BULK_SIZE === 0) {
+            await downloadBulk(promises);
+            promises = [];
+          }
         }
 
-        downloadUrls.forEach((u) => URL.revokeObjectURL(u));
+        // download remaining
+        await downloadBulk(promises);
 
-        if (processResult.length === downloadUrls.length) {
+        if (downloadCount === this.files.length) {
           this.props.showSnack('All files have been saved successfully!');
         } else {
           this.props.showSnack('Some files could not be processed');
