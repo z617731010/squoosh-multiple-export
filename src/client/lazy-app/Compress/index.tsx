@@ -506,6 +506,11 @@ export default class Compress extends Component<Props, State> {
       : defaultProcessorState;
     const selectedEncoder = side.latestSettings.encoderState;
 
+    // No encoder selected, original image
+    if (!selectedEncoder) {
+      return file;
+    }
+
     try {
       const { decoded, vectorImage } = await decodeImage(
         mainSignal,
