@@ -475,7 +475,7 @@ export default class Compress extends Component<Props, State> {
 
     clearTimeout(this.updateImageTimeout);
     if (immediate) {
-      await this.updateImage();
+      this.updateImage();
     } else {
       this.updateImageTimeout = window.setTimeout(
         this.updateImage.bind(this),
@@ -756,7 +756,7 @@ export default class Compress extends Component<Props, State> {
     this.activeMainJob = undefined;
 
     // Allow side jobs to happen in parallel
-    const jobs = sideWorksNeeded.map(async (sideWorkNeeded, sideIndex) => {
+    sideWorksNeeded.forEach(async (sideWorkNeeded, sideIndex) => {
       try {
         // If processing is true, encoding is always true.
         if (!sideWorkNeeded.encoding) return;
@@ -878,8 +878,6 @@ export default class Compress extends Component<Props, State> {
         throw err;
       }
     });
-
-    return await Promise.allSettled(jobs);
   }
 
   private downloadFromUrl(url: string) {
