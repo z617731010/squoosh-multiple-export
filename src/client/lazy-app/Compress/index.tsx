@@ -881,10 +881,10 @@ export default class Compress extends Component<Props, State> {
     });
   }
 
-  private downloadFromUrl(url: string) {
+  private downloadFromUrl(url: string, fileName: string) {
     let a = document.createElement('a');
     a.setAttribute('href', url);
-    a.setAttribute('download', '');
+    a.setAttribute('download', fileName);
     a.setAttribute('target', '_blank');
     a.click();
     a.remove();
@@ -900,20 +900,24 @@ export default class Compress extends Component<Props, State> {
 
         const downloadBulk = async (files: Promise<File | null>[]) => {
           if (files.length === 0) return;
+
           const processed = (await Promise.allSettled(files))
             .map((r) => (r.status === 'fulfilled' ? r.value : null))
             .filter(Boolean) as File[];
-          const downloadUrls = processed.map(URL.createObjectURL);
+          const downloadDetail = processed.map((p) => ({
+            url: URL.createObjectURL(p),
+            fileName: p.name,
+          }));
 
-          for (const url of downloadUrls) {
-            this.downloadFromUrl(url);
+          for (const { url, fileName } of downloadDetail) {
+            this.downloadFromUrl(url, fileName);
             // throttle a bit otherwise the browser won't let us download many files.
             await new Promise((resolve) => setTimeout(resolve, 300));
           }
 
-          downloadUrls.forEach((u) => URL.revokeObjectURL(u));
+          downloadDetail.forEach(({ url }) => URL.revokeObjectURL(url));
 
-          downloadCount += downloadUrls.length;
+          downloadCount += downloadDetail.length;
         };
 
         const BULK_SIZE = 10;
